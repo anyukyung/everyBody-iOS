@@ -29,7 +29,7 @@ class DefaultAlbumRepositry: AlbumRepository {
         return observable
     }
     
-    func createAlbum(request: CreateAlbumRequestModel) -> Observable<Album> {
+    func createAlbum(request: AlbumRequestModel) -> Observable<Album> {
         let observable = Observable<Album>.create { observer -> Disposable in
             let requestReference: () = CreateAlbumService.shared.postCreateAlbum(request: request) { response in
                 switch response {
@@ -46,7 +46,7 @@ class DefaultAlbumRepositry: AlbumRepository {
         return observable
     }
     
-    func createAlbum(request: CreateAlbumRequestModel) -> Observable<Int> {
+    func createAlbum(request: AlbumRequestModel) -> Observable<Int> {
         return Observable<Int>.create { observer -> Disposable in
             let requestReference: () = CreateAlbumService.shared.postCreateAlbum(request: request) { response in
                 switch response {
@@ -61,12 +61,30 @@ class DefaultAlbumRepositry: AlbumRepository {
     }
     
     @discardableResult
-    func deletePicture(pictureId: Int) -> Observable<Int> {
+    func savePhoto(request: PhotoRequestModel) -> Observable<Int> {
         Observable<Int>.create { observer -> Disposable in
-            let requestReference: () = AlbumService.shared.deletePicture(id: pictureId) { response in
+            let requestReference: () = CameraService.shared.postPhoto(request: request) { response in
                 switch response {
-                case .success:
-                    observer.onNext(200)
+                case .success(let statusCode):
+                    if let statusCode = statusCode {
+                        observer.onNext(statusCode)
+                    }
+                case .failure(let err):
+                    print(err)
+                }
+            }
+            return Disposables.create(with: { requestReference })
+        }
+    }
+    
+    func sendFeedback(request: FeedbackRequestModel) -> Observable<Int> {
+        Observable<Int>.create { observer -> Disposable in
+            let requestReference: () = AlbumService.shared.sendFeedback(request: request) { response in
+                switch response {
+                case .success(let statusCode):
+                    if let statusCode = statusCode {
+                        observer.onNext(statusCode)
+                    }
                 case .failure(let err):
                     print(err)
                 }

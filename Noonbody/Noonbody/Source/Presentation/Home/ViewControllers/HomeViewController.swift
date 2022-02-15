@@ -9,9 +9,9 @@ import UIKit
 
 import SnapKit
 import Then
-
 import RxCocoa
 import RxSwift
+import SkeletonView
 
 class HomeViewController: BaseViewController {
     
@@ -25,12 +25,12 @@ class HomeViewController: BaseViewController {
     }
     
     private lazy var nicknameLabel = UILabel().then {
-        $0.text = UserDefaults.standard.string(forKey: "nickname") ?? ""
+        $0.text = UserManager.nickname ?? ""
         $0.font = .nbFont(type: .subtitle)
     }
     
     private lazy var mottoLabel = UILabel().then {
-        $0.text = UserDefaults.standard.string(forKey: "motto") ?? ""
+        $0.text = UserManager.motto ?? ""
         $0.font = .nbFont(type: .body3)
         $0.textColor = Asset.Color.gray60.color
     }
@@ -48,8 +48,11 @@ class HomeViewController: BaseViewController {
         layout.itemSize = CGSize(width: (Constant.Size.screenWidth - 51) / 2, height: 211)
         $0.register(AlbumCollectionViewCell.self)
         $0.register(ListCollectionViewCell.self)
+        $0.registerReusableView(FeedbackCollectionReusableView.self,
+                                kind: UICollectionView.elementKindSectionFooter)
         $0.backgroundColor = .white
         $0.collectionViewLayout = layout
+        $0.isSkeletonable = true
     }
     
     // MARK: - Properties
@@ -68,23 +71,37 @@ class HomeViewController: BaseViewController {
         }
     }
     
+    private let feedbackPopUp = FeedbackPopUpViewController()
+    
     // MARK: - View Life Cycle
     
     override func viewDidLoad() {
         super.viewDidLoad()
         
         bind()
-        initListNavigationBar()
         setupCollectionView()
+        initListNavigationBar()
         setupViewHierarchy()
         setupConstraint()
+        setupSkeletion()
         navigationController?.isNavigationBarHidden = false
     }
     
     // MARK: - Methods
     
+    func setupSkeletion() {
+        let animation = SkeletonAnimationBuilder().makeSlidingAnimation(withDirection: .leftRight)
+        albumCollectionView.showAnimatedGradientSkeleton(usingGradient: .init(baseColor: Asset.Color.gray20.color,
+                                                                              secondaryColor: Asset.Color.gray30.color),
+                                                         animation: animation,
+                                                         transition: .crossDissolve(1))
+    }
+    
     func bind() {
-        let input = AlbumViewModel.Input(viewWillAppear: rx.viewWillAppear.map { _ in })
+        let input = AlbumViewModel.Input(viewWillAppear: rx.viewWillAppear.map { _ in },
+                                         content: feedbackPopUp.textField.rx.text.orEmpty.asObservable(),
+                                         starRate: feedbackPopUp.starRate.asObservable(),
+                                         sendButtonControlEvent: feedbackPopUp.sendButton.rx.tap)
         let output = viewModel.transform(input: input)
         
         output.album
@@ -92,11 +109,14 @@ class HomeViewController: BaseViewController {
                 guard let self = self else { return }
                 self.albumData = data
                 self.emptyView.isHidden = self.albumData.count != 0 ? true : false
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    self.albumCollectionView.hideSkeleton()
+                }
             })
             .disposed(by: disposeBag)
         
         UserDefaults.standard.rx
-            .observe(String.self, "nickname")
+            .observe(String.self, Constant.UserDefault.nickname)
             .subscribe(onNext: { (value) in
                 if let value = value {
                     self.nicknameLabel.text = value
@@ -105,13 +125,27 @@ class HomeViewController: BaseViewController {
             .disposed(by: disposeBag)
         
         UserDefaults.standard.rx
-            .observe(String.self, "motto")
+            .observe(String.self, Constant.UserDefault.motto)
             .subscribe(onNext: { (value) in
                 if let value = value {
                     self.mottoLabel.text = value
                 }
             })
             .disposed(by: disposeBag)
+        
+        output.canSend
+            .drive(feedbackPopUp.sendButton.rx.isEnabled)
+            .disposed(by: disposeBag)
+        
+        output.sendFeedbackStatusCode
+            .drive(onNext: { [weak self] statusCode in
+                guard let self = self else { return }
+                if statusCode == 200 {
+                    self.dismiss(animated: true, completion: nil)
+                    self.showToast(type: .send)
+                    self.resetFeedback()
+                }
+            }).disposed(by: disposeBag)
     }
     
     private func initNavigationBar() {
@@ -137,6 +171,14 @@ class HomeViewController: BaseViewController {
         makeProfileImage()
     }
     
+    private func resetFeedback() {
+        feedbackPopUp.textField.text = ""
+        feedbackPopUp.starRate.onNext(0)
+        feedbackPopUp.rateButtonList.forEach { button in
+            button.isSelected = false
+        }
+    }
+    
     private func makeProfileImage() {
         let button = UIButton(type: .system)
         button.frame = CGRect(x: 0, y: 0, width: 40, height: 40)
@@ -145,7 +187,7 @@ class HomeViewController: BaseViewController {
         button.imageView?.contentMode = .scaleAspectFit
         button.addTarget(self, action: #selector(pushToPreferenceViewController), for: .touchUpInside)
         
-        let imageData = try? Data(contentsOf: URL(string: UserDefaults.standard.string(forKey: "profile") ?? "")!)
+        let imageData = try? Data(contentsOf: URL(string: UserManager.profile ?? "")!)
         
         if let imageData = imageData, let image =  UIImage(data: imageData)?.resizeImage(to: button.frame.size) {
             button.setBackgroundImage(image, for: .normal)
@@ -250,9 +292,32 @@ extension HomeViewController: UICollectionViewDelegateFlowLayout {
         let viewController = PanoramaViewController(albumId: albumData[indexPath.row].id, albumData: albumData[indexPath.row])
         self.navigationController?.pushViewController(viewController, animated: true)
     }
+    
+    func collectionView(_ collectionView: UICollectionView, viewForSupplementaryElementOfKind kind: String, at indexPath: IndexPath) -> UICollectionReusableView {
+        let footer = collectionView.dequeueReusableView(FeedbackCollectionReusableView.self,
+                                                        indexPath: indexPath,
+                                                        kind: UICollectionView.elementKindSectionFooter)
+        footer.delegate = self
+        return footer
+    }
+    
+    func collectionView(_ collectionView: UICollectionView, layout collectionViewLayout: UICollectionViewLayout, referenceSizeForFooterInSection section: Int) -> CGSize {
+        return CGSize(width: collectionView.frame.width, height: 60)
+    }
 }
 
-extension HomeViewController: UICollectionViewDataSource {
+extension HomeViewController: SkeletonCollectionViewDelegate { }
+
+extension HomeViewController: SkeletonCollectionViewDataSource {
+    
+    func collectionSkeletonView(_ skeletonView: UICollectionView, cellIdentifierForItemAt indexPath: IndexPath) -> ReusableCellIdentifier {
+        return AlbumCollectionViewCell.className
+    }
+    
+    func collectionSkeletonView(_ skeletonView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
+        return 4
+    }
+    
     public func collectionView(_ collectionView: UICollectionView, numberOfItemsInSection section: Int) -> Int {
         return albumData.count
     }
@@ -269,4 +334,20 @@ extension HomeViewController: UICollectionViewDataSource {
         return cell
     }
     
+}
+
+extension HomeViewController: PopUpActionProtocol {
+    func cancelButtonDidTap(_ button: UIButton) {
+        self.dismiss(animated: true, completion: nil)
+        resetFeedback()
+    }
+}
+
+extension HomeViewController: footerDelegate {
+    func feedbackButtonDidTap() {
+        feedbackPopUp.modalTransitionStyle = .crossDissolve
+        feedbackPopUp.modalPresentationStyle = .overCurrentContext
+        feedbackPopUp.delegate = self
+        self.present(feedbackPopUp, animated: true, completion: nil)
+    }
 }

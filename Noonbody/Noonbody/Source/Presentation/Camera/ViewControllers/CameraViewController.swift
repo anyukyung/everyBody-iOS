@@ -22,9 +22,13 @@ class CameraViewController: BaseViewController {
     private lazy var takeButton = UIButton()
     private lazy var gridSwitch = CustomSwitch(width: 59, height: 24).then {
         $0.type = .text
+        $0.delegate = self
     }
-    private var previewView = UIView()
-    private var gridIndicatorView = UIImageView().then {
+    private var previewView = UIView().then {
+        $0.backgroundColor = .black
+    }
+    private lazy var gridIndicatorView = UIImageView().then {
+        $0.isHidden = !UserManager.gridMode
         $0.image = Asset.Image.gridIndicator.image
     }
     private let poseButtonView = TextWithIconView(icon: Asset.Image.pose.image, title: "포즈")
@@ -42,9 +46,10 @@ class CameraViewController: BaseViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-
+        
         checkPermission()
         initNavigationBar()
+        initGridView()
         setupViewHierarchy()
         setupConstraint()
         addPinchGesture()
@@ -55,10 +60,6 @@ class CameraViewController: BaseViewController {
         initAttributes()
     }
     
-    override func viewWillAppear(_ animated: Bool) {
-        camera.session.startRunning()
-    }
-    
     // MARK: - Methods
     
     private func checkPermission() {
@@ -67,25 +68,38 @@ class CameraViewController: BaseViewController {
             camera.setUp()
             previewView = camera.makeCameraLayer()
             camera.cameraDataOutput()
+            camera.session.startRunning()
             return
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { status in
-                if status {
-                    self.camera.setUp()
-                    self.previewView = self.camera.makeCameraLayer()
-                    self.camera.cameraDataOutput()
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                guard granted else {
+                    DispatchQueue.main.async {
+                        self.showPopUp()
+                    }
+                    return
                 }
             }
+            camera.setUp()
+            previewView = camera.makeCameraLayer()
+            camera.cameraDataOutput()
+            camera.session.startRunning()
+            return
+        case .denied:
+            showPopUp()
         default:
             return
         }
     }
     
-    func initNavigationBar() {
+    private func initNavigationBar() {
         navigationController?.initNavigationBar(navigationItem: self.navigationItem,
                                                 rightButtonImages: [Asset.Image.refresh.image],
                                                 rightActions: [#selector(switchCameraMode)])
         title = "사진 촬영"
+    }
+    
+    private func initGridView() {
+        gridSwitch.isOn = UserManager.gridMode
     }
     
     private func initAttributes() {
@@ -121,18 +135,13 @@ class CameraViewController: BaseViewController {
                 bottomSheetWillAppear()
             })
             .disposed(by: disposeBag)
-
+        
         albumButtonView.rx
             .tapGesture()
             .when(.recognized)
             .subscribe(onNext: { _ in
                 self.openAlbumLibrary()
             })
-            .disposed(by: disposeBag)
-        
-        gridSwitch.isToggleSubject
-            .map { !$0 }
-            .bind(to: gridIndicatorView.rx.isHidden)
             .disposed(by: disposeBag)
         
         bottomSheetView.indexPathSubject
@@ -148,7 +157,7 @@ class CameraViewController: BaseViewController {
             }
             .disposed(by: disposeBag)
     }
-
+    
     private func updateConstraint(height: CGFloat) {
         bottomSheetView.snp.updateConstraints {
             $0.height.equalTo(height)
@@ -161,9 +170,20 @@ class CameraViewController: BaseViewController {
         }
     }
     
-    func getPicture(pictureData: Data) -> UIImage {
+    private func getPicture(pictureData: Data) -> UIImage {
         guard let image = UIImage(data: pictureData) else { return UIImage() }
         return image
+    }
+    
+    private func showPopUp() {
+        let popUp = PopUpViewController(type: .oneButton)
+        popUp.modalTransitionStyle = .crossDissolve
+        popUp.modalPresentationStyle = .overCurrentContext
+        popUp.delegate = self
+        popUp.titleLabel.text = "카메라 권한 설정 알림"
+        popUp.descriptionLabel.text = "카메라를 사용할 수 없습니다. \n[설정] => [개인 정보 보호] => [카메라]에서 NoonBody를 ON으로 설정해주세요."
+        popUp.setCancelButtonTitle(text: "완료")
+        self.present(popUp, animated: true, completion: nil)
     }
     
     // MARK: - Actions
@@ -244,7 +264,7 @@ extension CameraViewController: PHPickerViewControllerDelegate {
                             let src = CGImageSourceCreateWithData(data as CFData, nil)!
                             if let metadata = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [String: Any] {
                                 let (date, time) = self.viewModel.getCreationDate(metadata: metadata)
-
+                                
                                 DispatchQueue.main.async {
                                     let viewController = CameraOutputViewController(image: image,
                                                                                     day: date,
@@ -260,6 +280,20 @@ extension CameraViewController: PHPickerViewControllerDelegate {
         }
         
         picker.dismiss(animated: true)
+    }
+    
+}
+
+extension CameraViewController: PopUpActionProtocol {
+    
+    func cancelButtonDidTap(_ button: UIButton) {
+        self.dismiss(animated: true, completion: nil)
+        for controller in self.navigationController!.viewControllers as Array {
+            if controller.isKind(of: HomeViewController.self) {
+                self.navigationController?.popToViewController(controller, animated: true)
+                break
+            }
+        }
     }
     
 }
@@ -326,7 +360,7 @@ extension CameraViewController {
             $0.bottom.leading.trailing.equalToSuperview()
             $0.height.equalTo(0)
         }
-
+        
         toastView.snp.makeConstraints {
             $0.leading.trailing.equalToSuperview()
             $0.height.equalTo(40)
@@ -337,7 +371,7 @@ extension CameraViewController {
 }
 
 extension CameraViewController: AVCapturePhotoCaptureDelegate {
-
+    
     func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
         guard let imageData = photo.fileDataRepresentation() else { return }
         let (day, time) = viewModel.getCreationDate(metadata: photo.metadata)
@@ -347,4 +381,13 @@ extension CameraViewController: AVCapturePhotoCaptureDelegate {
                                                         time: time)
         navigationController?.pushViewController(viewController, animated: false)
     }
+}
+
+extension CameraViewController: CustomSwitchDelegate {
+    
+    func switchButtonStateChanged(isOn: Bool) {
+        UserManager.gridMode = isOn
+        gridIndicatorView.isHidden = !isOn
+    }
+    
 }

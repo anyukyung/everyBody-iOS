@@ -51,7 +51,8 @@ final class ProfileViewModel {
                     .nickName(nickname: response.nickname),
                     .motto(motto: response.motto),
                     .pushNotification,
-                    .saved
+                    .saved,
+                    .privacyPolicy
                 ]
             }.asDriver(onErrorJustReturn: [])
         
@@ -74,8 +75,8 @@ final class ProfileViewModel {
         
         let response = input.completeButtonTap.withLatestFrom(requestObservable)
             .map { nickname, motto in
-                UserDefaults.standard.set(nickname, forKey: "nickname")
-                UserDefaults.standard.set(motto, forKey: "motto")
+                UserManager.nickname = nickname
+                UserManager.motto = motto
                 return ProfileRequestModel(nickname: nickname,
                                            motto: motto)
             }

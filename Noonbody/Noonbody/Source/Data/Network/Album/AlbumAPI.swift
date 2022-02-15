@@ -13,7 +13,8 @@ enum AlbumAPI: BaseTargetType {
     typealias ResultModel = [Album]
     
     case getAlbumList
-    case deletePicture(pictureId: Int)
+    case savePhoto(request: PhotoRequestModel)
+    case sendFeedback(request: FeedbackRequestModel)
 }
 
 extension AlbumAPI {
@@ -22,8 +23,10 @@ extension AlbumAPI {
         switch self {
         case .getAlbumList:
             return HTTPMethodURL.GET.album
-        case .deletePicture(let pictureId):
-            return HTTPMethodURL.DELETE.pictures + "/\(pictureId)"
+        case .savePhoto:
+            return HTTPMethodURL.POST.photo
+        case .sendFeedback:
+            return HTTPMethodURL.POST.feedback
         }
     }
     
@@ -31,8 +34,10 @@ extension AlbumAPI {
         switch self {
         case .getAlbumList:
             return .get
-        case .deletePicture:
-            return .delete
+        case .savePhoto:
+            return .post
+        case .sendFeedback:
+            return .post
         }
     }
     
@@ -40,8 +45,33 @@ extension AlbumAPI {
         switch self {
         case .getAlbumList:
             return .requestPlain
-        case .deletePicture:
-            return .requestPlain
+        case .savePhoto(let request):
+            var multiPartFormData: [MultipartFormData] = []
+            
+            let parameters: [String: Any] = [
+                "album_id": request.albumId,
+                "body_part": request.bodyPart,
+                "taken_at": request.takenAt
+            ]
+            
+            for (key, value) in parameters {
+                multiPartFormData.append(MultipartFormData(provider: .data("\(value)".data(using: .utf8)!),
+                                                           name: key))
+            }
+            
+            let imageData = request.image.jpegData(compressionQuality: 1.0)
+            let multipartImage = MultipartFormData(provider: .data(imageData!),
+                                                   name: "image",
+                                                   fileName: "image",
+                                                   mimeType: "image/jpeg")
+            
+            multiPartFormData.append(multipartImage)
+            
+            return .uploadMultipart(multiPartFormData)
+        case .sendFeedback(let request):
+            return .requestParameters(parameters: ["content" : request.content,
+                                                   "star_rate": request.starRate],
+                                      encoding: JSONEncoding.default)
         }
     }
 }

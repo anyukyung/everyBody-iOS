@@ -34,11 +34,11 @@ extension UINavigationController {
             )
     }
     
-    func initNaviBarWithBackButton() {
+    func initNaviBarWithBackButton(tintColor: UIColor = Asset.Color.gray90.color) {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithTransparentBackground()
         appearance.titleTextAttributes = [
-            .foregroundColor: Asset.Color.gray90.color
+            .foregroundColor: tintColor
         ]
         
         appearance.setBackIndicatorImage(backButtonImage, transitionMaskImage: backButtonImage)
@@ -47,23 +47,24 @@ extension UINavigationController {
         navigationBar.standardAppearance = appearance
         navigationBar.scrollEdgeAppearance = appearance
         navigationBar.compactAppearance = appearance
-        navigationBar.tintColor = Asset.Color.gray90.color
+        navigationBar.tintColor = tintColor
         
-        appearance.backgroundColor = .white
+        appearance.backgroundColor = .clear
         appearance.shadowColor = .clear
         
         self.navigationBar.standardAppearance = appearance
         self.navigationBar.scrollEdgeAppearance = appearance
-        self.navigationBar.tintColor = .black
+        self.navigationBar.tintColor = tintColor
     }
     
     func initNavigationBar(navigationItem: UINavigationItem?,
                            leftButtonImages: [UIImage]? = nil,
                            rightButtonImages: [UIImage]? = nil,
                            leftActions: [Selector]? = nil,
-                           rightActions: [Selector]? = nil) {
+                           rightActions: [Selector]? = nil,
+                           tintColor: UIColor = Asset.Color.gray90.color) {
         
-        initNaviBarWithBackButton()
+        initNaviBarWithBackButton(tintColor: tintColor)
         
         makeBarButtons(navigationItem: navigationItem,
                        buttonImage: leftButtonImages,
@@ -77,6 +78,26 @@ extension UINavigationController {
         
         let backBarButtton = UIBarButtonItem(title: "", style: .plain, target: nil, action: nil)
         navigationItem?.backBarButtonItem = backBarButtton
+    }
+    
+    func initNavigationBarWithMenu(navigationItem: UINavigationItem?,
+                                   rightButtonImage: UIImage,
+                                   rightAction: Selector,
+                                   menuButtonImage: UIImage,
+                                   menuChildItem: [UIAction],
+                                   tintColor: UIColor = Asset.Color.gray90.color) {
+        
+        initNaviBarWithBackButton(tintColor: tintColor)
+        
+        guard let menuButton = navigationItem?.makeCustomBarItem(self.topViewController,
+                                                                 image: menuButtonImage,
+                                                                 childItem: menuChildItem) else { return }
+        guard let rightButton = navigationItem?.makeCustomBarItem(self.topViewController,
+                                                                  action: rightAction,
+                                                                  image: rightButtonImage) else { return }
+        
+        let barButtonItems: [UIBarButtonItem] = [menuButton, rightButton]
+        navigationItem?.rightBarButtonItems = barButtonItems
     }
     
     func makeBarButtons(navigationItem: UINavigationItem?,

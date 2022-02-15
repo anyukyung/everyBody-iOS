@@ -36,14 +36,14 @@ class PanoramaViewController: BaseViewController {
     }
     
     var bottomCollectionView = UICollectionView(frame: .zero, collectionViewLayout: UICollectionViewLayout()).then {
+        $0.register(BottomCollectionViewCell.self)
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
+        $0.collectionViewLayout = layout
         $0.bounces = false
-        $0.register(BottomCollectionViewCell.self)
         $0.backgroundColor = .white
         $0.showsHorizontalScrollIndicator = false
         $0.allowsMultipleSelection = false
-        $0.collectionViewLayout = layout
         $0.setContentHuggingPriority(.defaultLow, for: .vertical)
     }
     
@@ -61,25 +61,31 @@ class PanoramaViewController: BaseViewController {
     
     // MARK: - Properties
     
+    let cellSpacing: CGFloat = 2
+    var cellWidth: CGFloat = 0
     private let viewModel = PanoramaViewModel(panoramaUseCase: DefaultPanoramaUseCase(panoramaRepository: DefaultPanoramaRepository()))
-    private var popupViewController = PopUpViewController(type: .delete)
-    private var bodyPart = 0
+    private var deletePicturePopUp = PopUpViewController(type: .delete)
+    private var deleteAlbumPopUp = PopUpViewController(type: .delete)
+    private var renameAlbumPopUp = PopUpViewController(type: .textField)
+    private var cameraViewcontroller = CameraViewController()
     private var albumId: Int
     private var albumData: Album
-    var deleteData: [Int] = [] {
+    private var albumName: String
+    var bodyPart = 0
+    var deleteData: [Int: Int] = [:] {
         didSet {
-            navigationItem.rightBarButtonItem?.isEnabled = !deleteData.isEmpty ? true : false
+            navigationItem.rightBarButtonItem?.isEnabled = !deleteData.isEmpty || !editMode
+            if editMode {
+                self.title = "\(deleteData.count)장"
+            }
         }
     }
     
-    var bodyPartData: [PictureInfo] = [] {
+    var bodyPartData: [PictureInfo] {
         didSet {
             setHide()
             reloadCollectionView()
             editMode ? initEditNavigationBar() : initNavigationBar()
-            if !bodyPartData.isEmpty {
-                bottomCollectionView.scrollToItem(at: IndexPath(row: 0, section: 0), at: .centeredHorizontally, animated: true)
-            }
         }
     }
     
@@ -89,9 +95,6 @@ class PanoramaViewController: BaseViewController {
             topCollectionView.bounces = gridMode
             topCollectionView.isScrollEnabled = gridMode
             topCollectionView.allowsSelection = !gridMode
-            if !gridMode {
-                initBottomCollectionView()
-            }
         }
     }
     
@@ -101,6 +104,7 @@ class PanoramaViewController: BaseViewController {
             topCollectionView.isScrollEnabled = editMode
             topCollectionView.allowsMultipleSelection = editMode
             gridButton.isHidden = editMode
+            setHide()
         }
     }
     
@@ -111,15 +115,30 @@ class PanoramaViewController: BaseViewController {
     private var horizontalFlowLayout = UICollectionViewFlowLayout().then {
         $0.scrollDirection = .horizontal
     }
-    
-    var tagSelectedIdx = IndexPath(row: 0, section: 0)
     var centerCell: BottomCollectionViewCell?
+    var selectedIndexByPart = Array(repeating: IndexPath(item: 0, section: 0), count: 3)
+    var isSelectedEvent: Bool = false
+    
+    private lazy var menuItems: [UIAction] = [
+        UIAction(title: "앨범 이름 수정",
+                 image: Asset.Image.folderOpen.image,
+                 handler: { _ in self.editAlbumButtonDidTap()}),
+        UIAction(title: "앨범 삭제",
+                 image: Asset.Image.delGray.image,
+                 attributes: .destructive,
+                 handler: { _ in self.deleteAlbumButtonDidTap()}),
+        UIAction(title: "동영상 저장",
+                 image: Asset.Image.shareGray.image,
+                 handler: { _ in self.saveButtonDidTap() })
+    ]
     
     // MARK: - View Life Cycle
     
     init(albumId: Int, albumData: Album) {
         self.albumId = albumId
         self.albumData = albumData
+        self.bodyPartData = albumData.pictures.whole
+        self.albumName = self.albumData.name
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -138,32 +157,44 @@ class PanoramaViewController: BaseViewController {
         bind()
     }
     
-    override func viewDidAppear(_ animated: Bool) {
-        initBottomCollectionView()
+    override func viewWillAppear(_ animated: Bool) {
+        resetDeleteData()
+        editMode ? initEditNavigationBar() : initNavigationBar()
+    }
+    
+    override func viewDidLayoutSubviews() {
+        setHide()
+        bottomCollectionView.reloadData()
     }
     
     // MARK: - Methods
-    func bind() {
-        popupViewController.confirmButton.rx.tap
+    
+    private func bind() {
+        deletePicturePopUp.confirmButton.rx.tap
             .subscribe(onNext: {
-                self.deleteData.forEach { data in
-                    DefaultAlbumUseCase(albumRepository: DefaultAlbumRepositry())
-                        .deletePicture(pictureId: data).bind(onNext: { [weak self] statusCode in
+                self.deleteData.forEach { key, value in
+                    DefaultPanoramaUseCase(panoramaRepository: DefaultPanoramaRepository())
+                        .deletePicture(pictureId: value).bind(onNext: { [weak self] statusCode in
                             guard let self = self else { return }
                             if statusCode == 200 {
                                 self.showToast(type: .delete)
                             }
                         }).disposed(by: self.disposeBag)
-                    
-                    self.bodyPartData.removeAll(where: {$0.id == data})
+                    self.deleteAlbumData(id: value)
+                    self.bodyPartData.removeAll(where: {$0.id == value})
+                    self.updateSeletedIndex(index: key)
                 }
-                self.deleteData = []
+                self.resetDeleteData()
                 self.dismiss(animated: true, completion: self.topCollectionView.reloadData)
             }).disposed(by: disposeBag)
         
-        let input = PanoramaViewModel.Input(viewWillAppear: rx.viewWillAppear.map { _ in }, albumId: albumId)
+        let input = PanoramaViewModel.Input(cameraViewDidDisappear: cameraViewcontroller.rx.viewDidDisappear.map { _ in },
+                                            albumId: albumId,
+                                            albumNameTextField: renameAlbumPopUp.textField.rx.text.orEmpty.asObservable(),
+                                            deleteAlbumButtonControlEvent: deleteAlbumPopUp.confirmButton.rx.tap,
+                                            renameButtonControlEvent: renameAlbumPopUp.confirmButton.rx.tap)
         let output = viewModel.transform(input: input)
-        
+
         output.album
             .drive(onNext: { [weak self] data in
                 guard let self = self else { return }
@@ -174,30 +205,50 @@ class PanoramaViewController: BaseViewController {
                 self.emptyView.isHidden = !self.bodyPartData.isEmpty ? true : false
             })
             .disposed(by: disposeBag)
+        
+        output.canRename
+            .drive(renameAlbumPopUp.confirmButton.rx.isEnabled)
+            .disposed(by: disposeBag)
+        
+        output.renamedAlbum
+            .drive(onNext: { [weak self] name in
+                guard let self = self else { return }
+                if let name = name {
+                    self.title = name
+                    self.albumName = name
+                    self.showToast(type: .save)
+                }
+            }).disposed(by: disposeBag)
+        
+        output.deleteAlbumStatusCode
+            .drive(onNext: { [weak self] statusCode in
+                guard let self = self else { return }
+                if statusCode == 204 {
+                    self.dismiss(animated: true, completion: nil)
+                    self.navigationController?.popViewController(animated: false)
+                }
+            }).disposed(by: disposeBag)
     }
     
     private func initNavigationBar() {
-        if bodyPartData.isEmpty {
-            navigationItem.rightBarButtonItems = nil
-        } else {
-            navigationController?.initNavigationBar(navigationItem: self.navigationItem,
-                                                    rightButtonImages: [Asset.Image.share.image,
-                                                                        Asset.Image.create.image],
-                                                    rightActions: [#selector(tapSaveButton),
-                                                                   #selector(tapEditOrCloseButton)])
-        }
+        navigationController?.initNavigationBarWithMenu(navigationItem: self.navigationItem,
+                                                        rightButtonImage: Asset.Image.create.image,
+                                                        rightAction: #selector(editOrCloseButtonDidTap),
+                                                        menuButtonImage: Asset.Image.option.image,
+                                                        menuChildItem: menuItems)
         navigationItem.leftBarButtonItems = nil
-        title = albumData.name
+        navigationItem.rightBarButtonItems?[1].customView?.isHidden = bodyPartData.isEmpty
+        title = albumName
     }
     
     private func initEditNavigationBar() {
         navigationController?.initNavigationBar(navigationItem: self.navigationItem,
                                                 leftButtonImages: [Asset.Image.clear.image],
                                                 rightButtonImages: [Asset.Image.del.image],
-                                                leftActions: [#selector(tapEditOrCloseButton)],
-                                                rightActions: [#selector(tapDeleteButton)])
+                                                leftActions: [#selector(editOrCloseButtonDidTap)],
+                                                rightActions: [#selector(deletePictureButtonDidTap)])
         
-        self.title = "\(bodyPartData.count)장"
+        self.title = "\(deleteData.count)장"
         navigationItem.rightBarButtonItem?.isEnabled = false
     }
     
@@ -225,9 +276,34 @@ class PanoramaViewController: BaseViewController {
         }
     }
     
-    private func initBottomCollectionView() {
-        centerCell = bottomCollectionView.cellForItem(at: tagSelectedIdx) as? BottomCollectionViewCell
-        centerCell?.transformToCenter()
+    private func deleteAlbumData(id: Int) {
+        switch bodyPart {
+        case 0:
+            albumData.pictures.whole.removeAll(where: {$0.id == id})
+        case 1:
+            albumData.pictures.upper.removeAll(where: {$0.id == id})
+        case 2:
+            albumData.pictures.lower.removeAll(where: {$0.id == id})
+        default:
+            return
+        }
+    }
+    
+    private func resetDeleteData() {
+        deleteData.removeAll()
+    }
+    
+    private func updateSeletedIndex(index: Int) {
+        let lastIndexPathItem = selectedIndexByPart[bodyPart].item
+        var updatedIndexPathItem: Int
+        
+        if index == lastIndexPathItem {
+            updatedIndexPathItem = lastIndexPathItem > 1 ? lastIndexPathItem - 1 : lastIndexPathItem
+        } else {
+            updatedIndexPathItem = index - lastIndexPathItem < 0 ? lastIndexPathItem - 1 : lastIndexPathItem
+        }
+        
+        selectedIndexByPart[bodyPart] = IndexPath(item: updatedIndexPathItem, section: 0)
     }
     
     private func switchPanoramaMode() {
@@ -237,25 +313,87 @@ class PanoramaViewController: BaseViewController {
         } else {
             topCollectionView.setCollectionViewLayout(horizontalFlowLayout, animated: false)
             bottomCollectionView.isHidden = false
+            setCollectionViewContentOffset(animated: false)
         }
-        
-        self.view.layoutIfNeeded()
-        bottomCollectionView.scrollToItem(at: tagSelectedIdx, at: .centeredHorizontally, animated: true)
     }
     
-    func reloadCollectionView() {
+    private func reloadCollectionView() {
         topCollectionView.reloadData()
         bottomCollectionView.reloadData()
     }
     
-    func setHide(){
+    private func setHide() {
         emptyView.isHidden = bodyPartData.isEmpty && !editMode ? false : true
         gridButton.isHidden = bodyPartData.isEmpty || editMode ? true : false
     }
     
+    func moveCellToCenter(animated: Bool) {
+        bottomCollectionView.selectItem(at: selectedIndexByPart[bodyPart], animated: false, scrollPosition: .centeredHorizontally)
+    }
+    
+    func setCollectionViewContentOffset(animated: Bool) {
+        topCollectionView.setContentOffset(CGPoint(x: topCollectionView.frame.maxX * CGFloat(selectedIndexByPart[bodyPart].row),
+                                                   y: 0.0), animated: false)
+        bottomCollectionView.setContentOffset(CGPoint(x: cellWidth * CGFloat(selectedIndexByPart[bodyPart].row), y: 0.0), animated: animated)
+    }
+    
+    private func editAlbumButtonDidTap() {
+        setPopUpViewController(popUp: renameAlbumPopUp)
+        renameAlbumPopUp.titleLabel.text = "앨범 이름을 수정해주세요."
+        renameAlbumPopUp.textField.text = albumName
+        renameAlbumPopUp.confirmButton.titleLabel?.font = .nbFont(type: .body1Bold)
+        self.present(renameAlbumPopUp, animated: true, completion: nil)
+    }
+    
+    private func deleteAlbumButtonDidTap() {
+        setPopUpViewController(popUp: deleteAlbumPopUp)
+        deleteAlbumPopUp.titleLabel.text = "정말 앨범을 삭제하시겠어요?"
+        deleteAlbumPopUp.descriptionLabel.text = "삭제를 누르면 앨범 속 사진이\n영구적으로 삭제됩니다."
+        deleteAlbumPopUp.setDeleteButton()
+        self.present(deleteAlbumPopUp, animated: true, completion: nil)
+    }
+    
+    private func saveButtonDidTap() {
+        bodyPartData.count > 1 ? pushVideoViewController() : presentWarningPopUp()
+    }
+    
+    private func pushVideoViewController() {
+        var imageList: [(String, String)] = []
+        switch bodyPart {
+        case 0:
+            imageList = albumData.pictures.whole.map { ($0.key, $0.imageURL) }
+        case 1:
+            imageList = albumData.pictures.upper.map { ($0.key, $0.imageURL) }
+        case 2:
+            imageList = albumData.pictures.lower.map { ($0.key, $0.imageURL) }
+        default:
+            return
+        }
+        let viewController = VideoEditViewController(albumData: imageList, title: albumData.name)
+        self.navigationController?.pushViewController(viewController, animated: true)
+    }
+    
+    private func presentWarningPopUp() {
+        let popUp = PopUpViewController(type: .oneButton)
+        setPopUpViewController(popUp: popUp)
+        popUp.titleLabel.text = "사진이 최소 2장 이상 필요해요."
+        popUp.descriptionLabel.text = "영상 저장하기를 이용하고 싶으시다면\n최소 2장의 사진을 업로드해 주세요."
+        popUp.setCancelButtonTitle(text: "확인")
+        popUp.cancelButton.titleLabel?.font = .nbFont(type: .body1Bold)
+        popUp.cancelButton.setTitleColor(Asset.Color.keyPurple.color, for: .normal)
+        self.present(popUp, animated: true, completion: nil)
+    }
+    
+    private func setPopUpViewController(popUp: PopUpViewController) {
+        popUp.modalTransitionStyle = .crossDissolve
+        popUp.modalPresentationStyle = .overCurrentContext
+        popUp.delegate = self
+    }
+    
     // MARK: - Actions
     @objc
-    private func tapEditOrCloseButton() {
+    private func editOrCloseButtonDidTap() {
+        resetDeleteData()
         editMode ? initNavigationBar() : initEditNavigationBar()
         editMode.toggle()
         if !gridMode {
@@ -264,19 +402,12 @@ class PanoramaViewController: BaseViewController {
     }
     
     @objc
-    private func tapSaveButton() {
-        /// init 내비에서 saveButton 눌렀을 때 처리
-    }
-    
-    @objc
-    private func tapDeleteButton() {
-        let popUp = popupViewController
-        popUp.modalTransitionStyle = .crossDissolve
-        popUp.modalPresentationStyle = .overCurrentContext
-        popUp.delegate = self
-        popUp.titleLabel.text = "\(deleteData.count)장의 사진을 삭제하시겠어요?"
-        popUp.descriptionLabel.text = "삭제를 누르시면 앨범에서\n영구 삭제가 됩니다."
-        self.present(popUp, animated: true, completion: nil)
+    private func deletePictureButtonDidTap() {
+        setPopUpViewController(popUp: deletePicturePopUp)
+        deletePicturePopUp.titleLabel.text = "\(deleteData.count)장의 사진을 삭제하시겠어요?"
+        deletePicturePopUp.descriptionLabel.text = "삭제를 누르시면 앨범에서\n영구 삭제가 됩니다."
+        deletePicturePopUp.setDeleteButton()
+        self.present(deletePicturePopUp, animated: true, completion: nil)
     }
     
     @objc
@@ -287,8 +418,7 @@ class PanoramaViewController: BaseViewController {
     }
     
     @objc func cameraButtonDidTap() {
-        let viewController = CameraViewController()
-        self.navigationController?.pushViewController(viewController, animated: true)
+        self.navigationController?.pushViewController(cameraViewcontroller, animated: true)
     }
     
 }
@@ -348,11 +478,18 @@ extension PanoramaViewController: NBSegmentedControlDelegate {
     func changeToIndex(_ segmentControl: NBSegmentedControl, at index: Int) {
         bodyPart = index
         initBodyPartData(index: bodyPart)
+        resetDeleteData()
+        selectedIndexByPart[bodyPart] = bodyPartData.isEmpty ? IndexPath(item: -1, section: 0) : selectedIndexByPart[index]
+        moveCellToCenter(animated: false)
     }
 }
 
 extension PanoramaViewController: PopUpActionProtocol {
     func cancelButtonDidTap(_ button: UIButton) {
+        self.dismiss(animated: true, completion: nil)
+    }
+    
+    func confirmButtonDidTap(_ button: UIButton, textInfo: String) {
         self.dismiss(animated: true, completion: nil)
     }
 }

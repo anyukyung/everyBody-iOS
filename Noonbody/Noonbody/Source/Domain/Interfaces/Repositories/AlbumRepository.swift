@@ -11,7 +11,7 @@ import RxSwift
 
 protocol AlbumRepository {
     func getAlbumList() -> Observable<[Album]>
-    func createAlbum(request: CreateAlbumRequestModel) -> Observable<Album>
-    func createAlbum(request: CreateAlbumRequestModel) -> Observable<Int>
-    func deletePicture(pictureId: Int) -> Observable<Int>
+    func createAlbum(request: AlbumRequestModel) -> Observable<Album>
+    func createAlbum(request: AlbumRequestModel) -> Observable<Int>
+    func savePhoto(request: PhotoRequestModel) -> Observable<Int>
 }

@@ -20,15 +20,19 @@ enum HTTPMethodURL {
         static let photo = "/pictures"
         static let signUp = "/auth/signup"
         static let singIn = "/auth/login"
+        static let video = "/videos/download"
+        static let feedback = "/feedbacks"
     }
     
     struct PUT {
         static let userInfo = "/users/me"
         static let notification = "/notification-configs/me"
+        static let album = "/albums"
     }
     
     struct DELETE {
         static let pictures = "/pictures"
+        static let album = "/albums"
     }
     
 }

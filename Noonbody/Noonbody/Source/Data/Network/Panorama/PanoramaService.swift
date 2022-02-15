@@ -19,4 +19,22 @@ public class PanoramaService {
             completion(response)
         }
     }
+    
+    func deletePicture(id: Int, completion: @escaping (Result<Int?, Error>) -> Void) {
+        provider.requestNoResultAPI(PanoramaAPI.deletePicture(pictureId: id)) { response in
+            completion(response)
+        }
+    }
+    
+    func renameAlbum(id: Int, request: AlbumRequestModel, completion: @escaping (Result<RenamedAlbum?, Error>) -> Void) {
+        provider.requestDecodedMultiRepsonse(PanoramaAPI.renameAlbum(albumId: id, request: request), RenamedAlbum.self) { response in
+            completion(response)
+        }
+    }
+    
+    func deleteAlbum(id: Int, completion: @escaping (Result<Int?, Error>) -> Void) {
+        provider.requestNoResultAPI(PanoramaAPI.deleteAlbum(albumId: id)) { response in
+             completion(response)
+        }
+    }
 }

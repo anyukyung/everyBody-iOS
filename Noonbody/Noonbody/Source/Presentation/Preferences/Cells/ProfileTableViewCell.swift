@@ -25,9 +25,10 @@ class ProfileTableViewCell: UITableViewCell {
         $0.textColor = Asset.Color.gray80.color
         $0.clearButtonMode = .whileEditing
     }
-    private let saveSwitch = CustomSwitch(width: 40, height: 24).then {
+    lazy var saveOnlyInAppSwitch = CustomSwitch(width: 40, height: 24).then {
         $0.descriptionLabel.isHidden = true
         $0.setOffColor(color: Asset.Color.gray30.color)
+        $0.delegate = self
     }
     
     private let separatorLine = UIView().then {
@@ -79,7 +80,7 @@ class ProfileTableViewCell: UITableViewCell {
             addSubview(profileTextField)
             rightButton?.removeFromSuperview()
             descriptionLabel.removeFromSuperview()
-            saveSwitch.removeFromSuperview()
+            saveOnlyInAppSwitch.removeFromSuperview()
             
             profileTextField.snp.makeConstraints {
                 $0.centerY.equalToSuperview()
@@ -99,7 +100,7 @@ class ProfileTableViewCell: UITableViewCell {
             }
         case .appSwitch:
             profileTextField.removeFromSuperview()
-            addSubviews(descriptionLabel, saveSwitch)
+            addSubviews(descriptionLabel, saveOnlyInAppSwitch)
             
             titleLabel.snp.remakeConstraints {
                 $0.top.equalToSuperview().offset(16)
@@ -109,7 +110,7 @@ class ProfileTableViewCell: UITableViewCell {
                 $0.top.equalTo(titleLabel.snp.bottom).offset(11)
                 $0.leading.equalTo(titleLabel.snp.leading)
             }
-            saveSwitch.snp.makeConstraints {
+            saveOnlyInAppSwitch.snp.makeConstraints {
                 $0.top.equalTo(titleLabel.snp.top)
                 $0.trailing.equalToSuperview().offset(-20)
                 $0.width.equalTo(38)
@@ -141,4 +142,12 @@ class ProfileTableViewCell: UITableViewCell {
         button.setImage(image, for: .normal)
     }
     
+}
+
+extension ProfileTableViewCell: CustomSwitchDelegate {
+    
+    func switchButtonStateChanged(isOn: Bool) {
+        UserManager.saveBulitInInLibrary = !isOn
+    }
+
 }
