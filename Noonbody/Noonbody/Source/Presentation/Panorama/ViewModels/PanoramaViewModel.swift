@@ -5,8 +5,6 @@
 //  Created by kong on 2021/11/02.
 //
 
-import Foundation
-
 import RxSwift
 import RxCocoa
 
@@ -17,6 +15,8 @@ final class PanoramaViewModel {
         let cameraViewDidDisappear: Observable<Void>
         let albumId: Int
         let albumNameTextField: Observable<String>
+        let deletePictureData: Observable<[Int: Int]>
+        let deletePictureButtonControlEvent: ControlEvent<Void>
         let deleteAlbumButtonControlEvent: ControlEvent<Void>
         let renameButtonControlEvent: ControlEvent<Void>
     }
@@ -25,6 +25,8 @@ final class PanoramaViewModel {
         let album: Driver<Album?>
         let canRename: Driver<Bool>
         let renamedAlbum: Driver<String?>
+        let deletePictureCount: Driver<Int>
+        let deletePictureStatusCode: Driver<Int>
         let deleteAlbumStatusCode: Driver<Int>
     }
     
@@ -33,6 +35,13 @@ final class PanoramaViewModel {
     }
     
     func transform(input: Input) -> Output {
+        
+        let pictureData = input.deletePictureData
+            .flatMap {
+                Observable.from($0.values)
+            }
+            .share()
+        
         let album = input.cameraViewDidDisappear
             .flatMap { _ in
                 self.panoramaUseCase.getAlbum(albumId: input.albumId) }
@@ -46,6 +55,13 @@ final class PanoramaViewModel {
             }
             .flatMap { request in
                 self.panoramaUseCase.renameAlbum(albumId: input.albumId, request: request)
+            }
+            .share()
+        
+        let deletePictureResponse = input.deletePictureButtonControlEvent
+            .withLatestFrom(pictureData)
+            .flatMap { pictureId in
+                self.panoramaUseCase.deletePicture(pictureId: pictureId)
             }
             .share()
         
@@ -71,12 +87,23 @@ final class PanoramaViewModel {
                 return response.name
             }.asDriver(onErrorJustReturn: nil)
         
+        let deletePictureCount = input.deletePictureData
+            .map { data in
+                return data.count
+            }.asDriver(onErrorJustReturn: 0)
+        
+        let deletePictureStatusCode = deletePictureResponse
+            .compactMap { $0 }
+            .map { result -> Int in
+                return result
+            }.asDriver(onErrorJustReturn: 404)
+        
         let deleteAlbumStatusCode = deleteAlbumResponse
             .compactMap { $0 }
             .map { response -> Int in
                 return response
             }.asDriver(onErrorJustReturn: 404)
         
-        return Output(album: data, canRename: canRename, renamedAlbum: renamedAlbum, deleteAlbumStatusCode: deleteAlbumStatusCode)
+        return Output(album: data, canRename: canRename, renamedAlbum: renamedAlbum, deletePictureCount: deletePictureCount, deletePictureStatusCode: deletePictureStatusCode, deleteAlbumStatusCode: deleteAlbumStatusCode)
     }
 }

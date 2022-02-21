@@ -72,15 +72,8 @@ class PanoramaViewController: BaseViewController {
     private var albumData: Album
     private var albumName: String
     var bodyPart = 0
-    var deleteData: [Int: Int] = [:] {
-        didSet {
-            navigationItem.rightBarButtonItem?.isEnabled = !deleteData.isEmpty || !editMode
-            if editMode {
-                self.title = "\(deleteData.count)장"
-            }
-        }
-    }
-    
+    var deletePictureData = BehaviorRelay<[Int: Int]>(value: [:])
+    var deletePictureDataValue: [Int: Int]
     var bodyPartData: [PictureInfo] {
         didSet {
             setHide()
@@ -139,6 +132,7 @@ class PanoramaViewController: BaseViewController {
         self.albumData = albumData
         self.bodyPartData = albumData.pictures.whole
         self.albumName = self.albumData.name
+        self.deletePictureDataValue = deletePictureData.value
         super.init(nibName: nil, bundle: nil)
     }
     
@@ -170,31 +164,15 @@ class PanoramaViewController: BaseViewController {
     // MARK: - Methods
     
     private func bind() {
-        deletePicturePopUp.confirmButton.rx.tap
-            .subscribe(onNext: {
-                self.deleteData.forEach { key, value in
-                    DefaultPanoramaUseCase(panoramaRepository: DefaultPanoramaRepository())
-                        .deletePicture(pictureId: value).bind(onNext: { [weak self] statusCode in
-                            guard let self = self else { return }
-                            if statusCode == 200 {
-                                self.showToast(type: .delete)
-                            }
-                        }).disposed(by: self.disposeBag)
-                    self.deleteAlbumData(id: value)
-                    self.bodyPartData.removeAll(where: {$0.id == value})
-                    self.updateSeletedIndex(index: key)
-                }
-                self.resetDeleteData()
-                self.dismiss(animated: true, completion: self.topCollectionView.reloadData)
-            }).disposed(by: disposeBag)
-        
         let input = PanoramaViewModel.Input(cameraViewDidDisappear: cameraViewcontroller.rx.viewDidDisappear.map { _ in },
                                             albumId: albumId,
                                             albumNameTextField: renameAlbumPopUp.textField.rx.text.orEmpty.asObservable(),
+                                            deletePictureData: deletePictureData.asObservable(),
+                                            deletePictureButtonControlEvent: deletePicturePopUp.confirmButton.rx.tap,
                                             deleteAlbumButtonControlEvent: deleteAlbumPopUp.confirmButton.rx.tap,
                                             renameButtonControlEvent: renameAlbumPopUp.confirmButton.rx.tap)
+        
         let output = viewModel.transform(input: input)
-
         output.album
             .drive(onNext: { [weak self] data in
                 guard let self = self else { return }
@@ -217,6 +195,30 @@ class PanoramaViewController: BaseViewController {
                     self.title = name
                     self.albumName = name
                     self.showToast(type: .save)
+                }
+            }).disposed(by: disposeBag)
+        
+        output.deletePictureCount
+            .drive(onNext: { [weak self] count in
+                guard let self = self else { return }
+                    self.title = "\(count)장"
+                    self.navigationItem.rightBarButtonItem?.isEnabled = count != 0
+                }
+            ).disposed(by: disposeBag)
+        
+        output.deletePictureStatusCode
+            .drive(onNext: { [weak self] statusCode in
+                guard let self = self else { return }
+                if statusCode == 200 {
+                    self.deletePictureData.value.forEach { key, value in
+                        self.deleteAlbumData(id: value)
+                        self.bodyPartData.removeAll(where: {$0.id == value})
+                        self.deletePictureDataValue.removeValue(forKey: key)
+                        self.deletePictureData.accept(self.deletePictureDataValue)
+                        self.updateSeletedIndex(index: key)
+                    }
+                    self.showToast(type: .delete)
+                    self.dismiss(animated: true, completion: self.topCollectionView.reloadData)
                 }
             }).disposed(by: disposeBag)
         
@@ -248,7 +250,7 @@ class PanoramaViewController: BaseViewController {
                                                 leftActions: [#selector(editOrCloseButtonDidTap)],
                                                 rightActions: [#selector(deletePictureButtonDidTap)])
         
-        self.title = "\(deleteData.count)장"
+        self.title = "\(deletePictureData.value.count)장"
         navigationItem.rightBarButtonItem?.isEnabled = false
     }
     
@@ -290,7 +292,7 @@ class PanoramaViewController: BaseViewController {
     }
     
     private func resetDeleteData() {
-        deleteData.removeAll()
+        deletePictureData.accept([:])
     }
     
     private func updateSeletedIndex(index: Int) {
@@ -404,7 +406,7 @@ class PanoramaViewController: BaseViewController {
     @objc
     private func deletePictureButtonDidTap() {
         setPopUpViewController(popUp: deletePicturePopUp)
-        deletePicturePopUp.titleLabel.text = "\(deleteData.count)장의 사진을 삭제하시겠어요?"
+        deletePicturePopUp.titleLabel.text = "\(deletePictureData.value.count)장의 사진을 삭제하시겠어요?"
         deletePicturePopUp.descriptionLabel.text = "삭제를 누르시면 앨범에서\n영구 삭제가 됩니다."
         deletePicturePopUp.setDeleteButton()
         self.present(deletePicturePopUp, animated: true, completion: nil)
